@@ -49,11 +49,11 @@ export function DashboardView({
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
             <span
               className={`w-2 h-2 rounded-full ${
-                streamConnected ? 'bg-[#16A34A]' : 'bg-amber-500'
+                streamConnected ? 'bg-[#16A34A]' : 'bg-[#25537A]'
               }`}
               aria-hidden="true"
             />
-            {streamConnected ? 'Sinkronisasi Real-Time Aktif' : 'Menghubungkan Ulang...'}
+            {streamConnected ? 'Sinkronisasi Real-Time Aktif' : 'Sinkronisasi Otomatis Aktif'}
           </span>
           <span aria-hidden="true">·</span>
           <span className="tabular-nums">

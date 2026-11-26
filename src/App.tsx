@@ -24,22 +24,91 @@ const TAB_LABELS: Record<ActiveTab, string> = {
   notifications: 'Notifikasi Otomatis',
 };
 
-async function apiRequest<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(typeof data?.error === 'string' ? data.error : 'Terjadi kesalahan server.');
+class ApiRequestError extends Error {
+  status: number;
+  detail?: string;
+
+  constructor(message: string, status: number, detail?: string) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.detail = detail;
   }
-  return data as T;
+}
+
+async function apiRequest<T>(url: string, options?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+  } catch (networkErr) {
+    const detail = networkErr instanceof Error ? networkErr.message : 'Koneksi jaringan terputus';
+    console.error(`[G-Library API] Gagal terhubung ke ${url}:`, networkErr);
+    throw new ApiRequestError(
+      `Tidak dapat terhubung ke server (${url}). Periksa koneksi atau status layanan backend.`,
+      0,
+      import.meta.env.DEV ? detail : undefined
+    );
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const rawBody = await response.text();
+  let parsed: Record<string, unknown> = {};
+
+  if (contentType.includes('application/json') && rawBody) {
+    try {
+      parsed = JSON.parse(rawBody) as Record<string, unknown>;
+    } catch (parseErr) {
+      console.error(`[G-Library API] Respons JSON tidak valid dari ${url}:`, parseErr);
+    }
+  }
+
+  if (!response.ok) {
+    const serverMessage = typeof parsed.error === 'string' ? parsed.error : '';
+    const serverDetail = typeof parsed.detail === 'string' ? parsed.detail : '';
+    const fallbackMessage =
+      response.status === 404
+        ? `Endpoint backend tidak ditemukan (HTTP 404 pada ${url}). Pastikan API serverless aktif.`
+        : `Server mengembalikan galat HTTP ${response.status}${response.statusText ? ` (${response.statusText})` : ''} pada ${url}.`;
+
+    const displayMessage = serverMessage || fallbackMessage;
+    const diagnosticDetail =
+      serverDetail ||
+      (!contentType.includes('application/json') && rawBody
+        ? `Non-JSON response (${contentType || 'unknown'}): ${rawBody.slice(0, 180)}`
+        : undefined);
+
+    console.error(`[G-Library API] Request gagal ${url} [HTTP ${response.status}]:`, {
+      message: displayMessage,
+      detail: diagnosticDetail,
+    });
+
+    throw new ApiRequestError(
+      displayMessage,
+      response.status,
+      import.meta.env.DEV ? diagnosticDetail : undefined
+    );
+  }
+
+  if (!contentType.includes('application/json')) {
+    console.error(`[G-Library API] Format respons tidak sesuai dari ${url}: ${contentType}`);
+    throw new ApiRequestError(
+      `Respons API tidak valid dari ${url} (diharapkan JSON, diterima ${contentType || 'teks/HTML'}).`,
+      response.status,
+      import.meta.env.DEV ? rawBody.slice(0, 180) : undefined
+    );
+  }
+
+  return parsed as T;
 }
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<LibrarySnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [loadErrorDetail, setLoadErrorDetail] = useState('');
   const [streamConnected, setStreamConnected] = useState(false);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -52,8 +121,15 @@ export default function App() {
       const data = await apiRequest<LibrarySnapshot>('/api/snapshot');
       setSnapshot(data);
       setLoadError('');
+      setLoadErrorDetail('');
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Gagal memuat data perpustakaan.');
+      if (err instanceof ApiRequestError) {
+        setLoadError(err.message);
+        setLoadErrorDetail(err.detail || '');
+      } else {
+        setLoadError(err instanceof Error ? err.message : 'Gagal memuat data perpustakaan.');
+        setLoadErrorDetail('');
+      }
     } finally {
       setLoading(false);
     }
@@ -72,17 +148,24 @@ export default function App() {
         setSnapshot(parsed);
         setLoading(false);
         setLoadError('');
+        setLoadErrorDetail('');
         setStreamConnected(true);
-      } catch {
-        // Ignore malformed SSE frame
+      } catch (parseErr) {
+        console.warn('[G-Library SSE] Gagal mem-parsing frame aliran data:', parseErr);
       }
     };
     source.onerror = () => {
       setStreamConnected(false);
     };
 
+    // Fallback periodic refresh for serverless environments where SSE closes early
+    const fallbackPoll = setInterval(() => {
+      void fetchSnapshot();
+    }, 15000);
+
     return () => {
       source.close();
+      clearInterval(fallbackPoll);
     };
   }, [fetchSnapshot]);
 
@@ -255,8 +338,13 @@ export default function App() {
               <div className="h-72 bg-white border border-slate-200 rounded-xl animate-pulse" />
             </div>
           ) : loadError && !snapshot ? (
-            <div className="bg-white border border-red-200 rounded-xl p-8 text-center">
+            <div className="bg-white border border-red-200 rounded-xl p-8 text-center max-w-xl mx-auto">
               <p className="text-sm font-semibold text-[#DC2626]">{loadError}</p>
+              {loadErrorDetail && (
+                <p className="mt-2 text-xs font-mono text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3 text-left break-words">
+                  {loadErrorDetail}
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => void fetchSnapshot()}
