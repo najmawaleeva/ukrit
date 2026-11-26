@@ -1,0 +1,6 @@
+{
+  "name": "G-Library — Perpustakaan Digital",
+  "description": "Sistem perpustakaan digital dengan peminjaman buku, manajemen anggota, notifikasi otomatis Email & WhatsApp, dan dashboard analitik sirkulasi real-time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
